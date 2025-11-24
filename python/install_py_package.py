@@ -1,9 +1,10 @@
-import os
 import shutil
 import sys
 import subprocess
+import threading
+import queue
+import os
 from dataclasses import dataclass
-#from pydantic import BaseModel
 
 @dataclass
 class cfg_mujoco_c:
@@ -21,42 +22,107 @@ class config:
     mujoco_c:cfg_mujoco_c
     mujoco_py:cfg_mujoco_py
 
-def _run_cmd(cmd):
-    full_cmd=' '.join(cmd)
-    print(f"-- CMD : {full_cmd}")
 
-    try:
-        with subprocess.Popen(
-            cmd,
+
+class cmd_shell:
+    def __init__(self ):
+
+        git_bash_key = 'GIT_BASH'
+        if git_bash_key in os.environ:
+            bash_path = os.environ[git_bash_key]
+        else:
+            print(f'please set environment variable {git_bash_key}')
+            exit(1)
+
+        self.process = subprocess.Popen(
+            [bash_path],
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text = True,
-            bufsize = 1,
-            encoding='utf-8',
-            universal_newlines = True
-        ) as proc:
-            for line in proc.stdout:
-                print(line, end='')
+            stderr=subprocess.PIPE,
+            text=True,
+            #shell=True,
+            bufsize=1,
+            env=os.environ,
+        )
 
-            proc.wait()
+        # two queues: one for stdout, one for stderr
+        self.stdout_q = queue.Queue()
+        self.stderr_q = queue.Queue()
 
-            if proc.returncode != 0:
-                print(f"-- CMD END failed with exit code {proc.returncode}: {full_cmd} ", file=sys.stderr)
-                sys.exit(proc.returncode)
+        # reader threads
+        threading.Thread(target=self._reader, args=(self.process.stdout, self.stdout_q), daemon=True).start()
+        threading.Thread(target=self._reader, args=(self.process.stderr, self.stderr_q), daemon=True).start()
 
-    except FileNotFoundError:
-        print(f"-- CMD END Command not found: {cmd[0]}: {full_cmd}", file=sys.stderr)
-        sys.exit(127)  # 127 is standard POSIX code for "command not found"
 
-    except PermissionError:
-        print(f"-- CMD END Permission denied: {cmd[0]}: {full_cmd}", file=sys.stderr)
-        sys.exit(126)  # 126 is standard POSIX code for "not executable"
+    def run(self, *cmd):
+        command = " ".join(list(cmd))
 
-    except OSError as e:
-        print(f"-- CMD END OS error while trying to run command: {e}: {full_cmd}", file=sys.stderr)
-        sys.exit(1)
+        """Send a command and return stdout + stderr output."""
 
-    print(f"-- CMD END succeeded: {full_cmd}")
+        self.process.stdin.write(_echo_cmd(command)+ "\n")
+        self.process.stdin.flush()
+
+        self.process.stdin.write(command + "\n")
+        self.process.stdin.flush()
+
+        self.process.stdin.write(_end_cmd()+ "\n")
+        self.process.stdin.flush()
+
+        stdout_lines = []
+        stderr_lines = []
+
+
+        while True:
+            something_wrong = False
+            try:
+                line = self.stdout_q.get_nowait()
+                stdout_lines.append(line)
+            except queue.Empty:
+                pass
+
+            try:
+                line = self.stderr_q.get_nowait()
+                stderr_lines.append(line)
+                something_wrong=True
+            except queue.Empty:
+                pass
+
+            #if (something_wrong  and  _check_cmd_begins(stdout_lines)) or _check_output_complete(stdout_lines) :
+            if _check_output_complete(stdout_lines):
+                break  # No more output for now
+
+
+        out=''.join(stdout_lines)
+        print(out.strip())
+
+        if len(stderr_lines)>0:
+            err=''.join(stderr_lines)
+            print(err)
+            #exit(1)
+
+
+    def _reader(self, pipe, q):
+        for line in pipe:
+            #print(line.strip())
+            q.put(line)
+
+    def close(self):
+        self.process.terminate()
+
+
+end_str='----'
+
+def _check_cmd_begins(lines):
+    return len(lines) > 0 and  lines[-1].strip() == end_str
+
+def _check_output_complete(lines):
+    return len(lines)>0 and  lines[0][0]=='$' and  lines[-1].strip() == end_str
+
+def _echo_cmd(cmd):
+    return 'echo $ '+ cmd
+
+def _end_cmd():
+    return 'echo '+ end_str
 
 
 def __copytree(dst, src, symlinks = False, ignore = None):
@@ -72,51 +138,64 @@ def _clear_dir(dir):
     if os.path.exists(dir):
         shutil.rmtree(dir, ignore_errors=True)
 
-def _override_copy_dir(dst,src):
-    _clear_dir(dst)
+def _copy_dir(dst,src):
     if not os.path.exists(dst):
         os.mkdir(dst)
     __copytree(dst,src)
 
-def _create_virtual_env_if_not_exists(dir):
+def _create_virtual_env_if_not_exists(dir,cmd):
     if not os.path.exists(dir):
-        _run_cmd(['python', '-m', 'venv', dir])
-        f = os.path.join(dir,'Scripts','activate')
-        _run_cmd(['source', f])
+        cmd.run('python', '-m', 'venv', dir)
+
+    if sys.platform == "win32":
+        f = dir + '/Scripts/activate'
+        cmd.run('source', f)
+    else:
+        f = dir + '/bin/activate'
+        cmd.run(f)
 
 
-def _cmake_install_mujoco_c(cfg_mujoco_c,current_dir):
-    _clear_dir(cfg_mujoco_c.build_dir)
+def _cmake_install_mujoco_c(cfg_mujoco_c, cmd):
 
     src_flag='-S'+ cfg_mujoco_c.src_dir
     build_dir_flag='-B'+ cfg_mujoco_c.build_dir
     install_flag='-DCMAKE_INSTALL_PREFIX=' + cfg_mujoco_c.install_dir
     build_style3d_flag='-DMUJOCO_BUILD_STYLE3D=OFF'
     version_flag='-DCMAKE_POLICY_VERSION_MINIMUM=3.5'
-    _run_cmd(['cmake', src_flag , build_dir_flag, install_flag,version_flag,build_style3d_flag])
 
-    _clear_dir(cfg_mujoco_c.install_dir)
-    _run_cmd(['cmake', '--build' ,cfg_mujoco_c.build_dir, '--target', 'install' , '--config',cfg_mujoco_c.build_type, ])
+    if not os.path.exists(cfg_mujoco_c.build_dir):
+        os.mkdir(cfg_mujoco_c.build_dir)
+    #cmd.run('rm',cfg_mujoco_c.build_dir,'-rf')
+    cmd.run('cmake', src_flag , build_dir_flag, install_flag,version_flag,build_style3d_flag)
 
-    mujoco_plugin_path = os.environ['MUJOCO_PLUGIN_PATH']
-    _override_copy_dir(mujoco_plugin_path, os.path.join(cfg_mujoco_c.install_dir,'bin'))
+    cmd.run('rm',cfg_mujoco_c.install_dir,'-rf')
+    cmd.run('cmake', '--build' ,cfg_mujoco_c.build_dir, '--target', 'install' , '--config',cfg_mujoco_c.build_type, )
+
+    os.environ['MUJOCO_PATH'] = cfg_mujoco_c.install_dir
+    os.environ['MUJOCO_PLUGIN_PATH'] =  cfg_mujoco_c.install_dir+'/MUJOCO_PLUGIN_PATH'
+
+    MUJOCO_PATH = os.environ['MUJOCO_PATH']
+    MUJOCO_PLUGIN_PATH = os.environ['MUJOCO_PLUGIN_PATH']
+
+    cmd.run('rm',MUJOCO_PLUGIN_PATH,'-rf')
+    _copy_dir(MUJOCO_PLUGIN_PATH, os.path.join(cfg_mujoco_c.install_dir,'bin'))
 
 
-def _pip_install_mujoco_py(cfg_mujoco_py,current_dir):
-    _create_virtual_env_if_not_exists('.venv')
+def _pip_install_mujoco_py(cmd):
+    _create_virtual_env_if_not_exists('.venv',cmd)
 
-    _run_cmd(['sh', './make_sdist.sh'])
-    _run_cmd(['pip', 'install', './dist/mujoco-3.3.6.tar.gz']) # make more rubost
+    cmd.run('sh', './make_sdist.sh')
+    cmd.run('pip', 'install', './dist/mujoco-3.3.6.tar.gz') # make more rubost
 
 
-def install(configs):
-    current_dir = os.getcwd()
+def install(configs,cmd):
     for cfg in configs:
-        _cmake_install_mujoco_c(cfg.mujoco_c, current_dir)
-        _pip_install_mujoco_py(cfg.mujoco_py, current_dir)
+        _cmake_install_mujoco_c(cfg.mujoco_c, cmd)
+        _pip_install_mujoco_py(cmd)
 
 configs = [ 
     config( cfg_mujoco_c('..','../temp_build','../temp_install','Release'), cfg_mujoco_py('Release'))
 ]
 
-install(configs)
+cmd =cmd_shell()
+install(configs,cmd)
