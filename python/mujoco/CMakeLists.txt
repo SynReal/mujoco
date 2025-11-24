@@ -28,8 +28,10 @@ endif()
 
 if(MSVC AND MSVC_VERSION GREATER_EQUAL 1927)
   set(CMAKE_CXX_STANDARD 20) # For forceinline lambdas.
+  message("cxx 20")
 else()
   set(CMAKE_CXX_STANDARD 17)
+  message("cxx 17")
 endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -173,7 +175,7 @@ findorfetch(
   GIT_REPO
   https://gitlab.com/libeigen/eigen
   GIT_TAG
-  4033cfcc1dd45b3cdf7285afd93556f2cfbe9425
+  49623d0c4e1af3c680845191948d10f6d3e92f8a
   TARGETS
   Eigen3::Eigen
   EXCLUDE_FROM_ALL

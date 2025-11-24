@@ -268,6 +268,7 @@ class BuildCMakeExtension(build_ext.build_ext):
         ),
         '-DCMAKE_Fortran_COMPILER:STRING=',
         '-DBUILD_TESTING:BOOL=OFF',
+        '-DMUJOCO_BUILD_TESTS:BOOL=OFF',
     ]
 
     if self._mujoco_framework_path is not None:
@@ -302,17 +303,22 @@ class BuildCMakeExtension(build_ext.build_ext):
     print('Configuring CMake with the following arguments:')
     for arg in cmake_args:
       print(f'    {arg}')
+
+    print(f'cmake1 ')
+    cmake_dir = os.path.join(os.path.dirname(__file__), 'mujoco')
+    print(f'CMakeDIR {cmake_dir}')
+    print(f'BuildTemp {self.build_temp}')
     subprocess.check_call(
         [cmake]
         + cmake_args
-        + [os.path.join(os.path.dirname(__file__), 'mujoco')],
+        + [cmake_dir] ,
         cwd=self.build_temp,
     )
 
     print('Building all extensions with CMake')
     subprocess.check_call(
         [cmake, '--build', '.', f'-j{os.cpu_count()}', '--config', build_cfg],
-        cwd=self.build_temp,
+        cwd = self.build_temp,
     )
 
   def build_extension(self, ext):

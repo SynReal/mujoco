@@ -65,6 +65,9 @@ class cmd_shell:
         self.process.stdin.write(command + "\n")
         self.process.stdin.flush()
 
+        self.process.stdin.write(_return_code_cmd()+ "\n")
+        self.process.stdin.flush()
+
         self.process.stdin.write(_end_cmd()+ "\n")
         self.process.stdin.flush()
 
@@ -83,7 +86,7 @@ class cmd_shell:
             try:
                 line = self.stderr_q.get_nowait()
                 stderr_lines.append(line)
-                something_wrong=True
+                something_wrong = True
             except queue.Empty:
                 pass
 
@@ -103,7 +106,6 @@ class cmd_shell:
 
     def _reader(self, pipe, q):
         for line in pipe:
-            #print(line.strip())
             q.put(line)
 
     def close(self):
@@ -124,6 +126,8 @@ def _echo_cmd(cmd):
 def _end_cmd():
     return 'echo '+ end_str
 
+def _return_code_cmd():
+    return 'echo $?'
 
 def __copytree(dst, src, symlinks = False, ignore = None):
     for item in os.listdir(src):
@@ -153,42 +157,55 @@ def _create_virtual_env_if_not_exists(dir,cmd):
 
 def _cmake_install_mujoco_c(cfg_mujoco_c, cmd):
 
+
     src_flag='-S'+ cfg_mujoco_c.src_dir
     build_dir_flag='-B'+ cfg_mujoco_c.build_dir
     install_flag='-DCMAKE_INSTALL_PREFIX=' + cfg_mujoco_c.install_dir
     build_style3d_flag='-DMUJOCO_BUILD_STYLE3D=OFF'
     version_flag='-DCMAKE_POLICY_VERSION_MINIMUM=3.5'
+    BUILD_TESTING='-DBUILD_TESTING=OFF'
+    MUJOCO_BUILD_TESTS='-DMUJOCO_BUILD_TESTS=OFF'
+    #MUJOCO_TEST_PYTHON_UTIL='-MUJOCO_TEST_PYTHON_UTIL=OFF'
 
     if not os.path.exists(cfg_mujoco_c.build_dir):
         os.mkdir(cfg_mujoco_c.build_dir)
-    #cmd.run('rm',cfg_mujoco_c.build_dir,'-rf')
-    cmd.run('cmake', src_flag , build_dir_flag, install_flag,version_flag,build_style3d_flag)
+    cmd.run('cmake', src_flag , build_dir_flag, install_flag, version_flag, build_style3d_flag, BUILD_TESTING, MUJOCO_BUILD_TESTS)
 
-    cmd.run('rm',cfg_mujoco_c.install_dir,'-rf')
-    cmd.run('cmake', '--build' ,cfg_mujoco_c.build_dir, '--target', 'install' , '--config',cfg_mujoco_c.build_type, )
+    cmd.run('rm', cfg_mujoco_c.install_dir + '/*','-rf')
+    cmd.run('cmake', '--build' ,cfg_mujoco_c.build_dir, '--target', 'install' , '--config', cfg_mujoco_c.build_type, )
 
-    os.environ['MUJOCO_PATH'] = cfg_mujoco_c.install_dir
-    os.environ['MUJOCO_PLUGIN_PATH'] =  cfg_mujoco_c.install_dir+'/MUJOCO_PLUGIN_PATH'
 
     MUJOCO_PATH = os.environ['MUJOCO_PATH']
     MUJOCO_PLUGIN_PATH = os.environ['MUJOCO_PLUGIN_PATH']
+    MUJOCO_PATH=MUJOCO_PATH.replace('\\','/')
+    MUJOCO_PLUGIN_PATH=MUJOCO_PLUGIN_PATH.replace('\\','/')
 
     cmd.run('rm',MUJOCO_PLUGIN_PATH,'-rf')
-    _copy_dir(MUJOCO_PLUGIN_PATH, os.path.join(cfg_mujoco_c.install_dir,'bin'))
-    _copy_dir(MUJOCO_PATH, os.path.join(cfg_mujoco_c.install_dir,'bin'))
-    _copy_dir(MUJOCO_PATH, os.path.join(cfg_mujoco_c.install_dir,'lib'))
-    _copy_dir(MUJOCO_PATH, os.path.join(cfg_mujoco_c.install_dir,'share'))
-    _copy_dir(MUJOCO_PATH, os.path.join(cfg_mujoco_c.install_dir,'include'))
+    cmd.run('rm',MUJOCO_PATH,'-rf')
+    cmd.run('mkdir',MUJOCO_PATH)
+    cmd.run('mkdir', MUJOCO_PLUGIN_PATH)
+
+    cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/bin/*', MUJOCO_PLUGIN_PATH )
+    cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/bin', MUJOCO_PATH )
+    cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/lib', MUJOCO_PATH )
+    cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/share', MUJOCO_PATH )
+    cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/include', MUJOCO_PATH )
 
 
 def _pip_install_mujoco_py(cmd):
     _create_virtual_env_if_not_exists('.venv',cmd)
 
+    if os.path.exists('./dist'):
+        cmd.run('rm', './dist/*','-rf')
     cmd.run('sh', './make_sdist.sh')
-    cmd.run('pip', 'install', './dist/mujoco-3.3.6.tar.gz') # make more rubost
+
+    f = os.listdir('./dist')[0]
+    f='./dist/'+ f
+    #cmd.run('pip', 'install', f,'--verbose','--no-clean')
+    cmd.run('pip', 'install', f)
 
 
-def install(configs,cmd):
+def install(configs, cmd):
     for cfg in configs:
         _cmake_install_mujoco_c(cfg.mujoco_c, cmd)
         _pip_install_mujoco_py(cmd)
