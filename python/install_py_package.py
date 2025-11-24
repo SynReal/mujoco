@@ -134,10 +134,6 @@ def __copytree(dst, src, symlinks = False, ignore = None):
         else:
             shutil.copy2(s, d)
 
-def _clear_dir(dir):
-    if os.path.exists(dir):
-        shutil.rmtree(dir, ignore_errors=True)
-
 def _copy_dir(dst,src):
     if not os.path.exists(dst):
         os.mkdir(dst)
@@ -179,6 +175,10 @@ def _cmake_install_mujoco_c(cfg_mujoco_c, cmd):
 
     cmd.run('rm',MUJOCO_PLUGIN_PATH,'-rf')
     _copy_dir(MUJOCO_PLUGIN_PATH, os.path.join(cfg_mujoco_c.install_dir,'bin'))
+    _copy_dir(MUJOCO_PATH, os.path.join(cfg_mujoco_c.install_dir,'bin'))
+    _copy_dir(MUJOCO_PATH, os.path.join(cfg_mujoco_c.install_dir,'lib'))
+    _copy_dir(MUJOCO_PATH, os.path.join(cfg_mujoco_c.install_dir,'share'))
+    _copy_dir(MUJOCO_PATH, os.path.join(cfg_mujoco_c.install_dir,'include'))
 
 
 def _pip_install_mujoco_py(cmd):
