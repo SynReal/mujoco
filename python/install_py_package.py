@@ -213,16 +213,8 @@ def _pip_install_mujoco_py(cmd):
     cmd.run('pip', 'install', f)
 
 
-def _prepare_install(cmd):
-    if sys.platform == "win32":
-        pass
-    else:
-        cmd.run('apt', 'update', '&&', 'apt', 'install' ,'libgl1-mesa-dev', 'libxinerama-dev', 'libxcursor-dev', 'libxrandr-dev', 'libxi-dev ninja-build')
-
-
 def install(configs, cmd):
     for cfg in configs:
-        _prepare_install(cmd)
         _cmake_install_mujoco_c(cfg.mujoco_c, cmd)
         _pip_install_mujoco_py(cmd)
 
