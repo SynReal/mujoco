@@ -5,6 +5,7 @@ import threading
 import queue
 import os
 from dataclasses import dataclass
+import argparse
 
 @dataclass
 class cfg_mujoco_c:
@@ -12,15 +13,12 @@ class cfg_mujoco_c:
     build_dir:str
     install_dir:str
     build_type:str
+    cmake_extra_flag:str
 
-@dataclass
-class cfg_mujoco_py:
-    build_type:str
 
 @dataclass
 class config:
     mujoco_c:cfg_mujoco_c
-    mujoco_py:cfg_mujoco_py
 
 
 
@@ -30,11 +28,18 @@ class cmd_shell:
         git_bash_key = 'GIT_BASH'
         if git_bash_key in os.environ:
             bash_path = os.environ[git_bash_key]
-        else:
+        elif sys.platform == "win32":
             print(f'please set environment variable {git_bash_key}:')
             print(f'On Windows: your_git/bin/bash.exe')
-            print(f'On Linux: usr/bin/bash')
             exit(1)
+        else:
+            unix_bash_path='/usr/bin/bash'
+            if os.path.exists(unix_bash_path):
+                bash_path='/usr/bin/bash'
+            else:
+                print(f'please set environment variable {git_bash_key}:')
+                print(f'On Linux: /usr/bin/bash')
+                exit(1)
 
         self.process = subprocess.Popen(
             [bash_path],
@@ -94,7 +99,6 @@ class cmd_shell:
             except queue.Empty:
                 pass
 
-            #if (something_wrong  and  _check_cmd_begins(stdout_lines)) or _check_output_complete(stdout_lines) :
             if _check_output_complete(stdout_lines):
                 break  # No more output for now
 
@@ -140,17 +144,12 @@ def _return_code_cmd():
 
 def __copytree(dst, src, symlinks = False, ignore = None):
     for item in os.listdir(src):
-        s = os.path.join(src, item)
-        d = os.path.join(dst, item)
+        s = _join_path(src, item)
+        d = _join_path(dst, item)
         if os.path.isdir(s):
             shutil.copytree(s, d, symlinks, ignore)
         else:
             shutil.copy2(s, d)
-
-def _copy_dir(dst,src):
-    if not os.path.exists(dst):
-        os.mkdir(dst)
-    __copytree(dst,src)
 
 def _create_virtual_env_if_not_exists(dir,cmd):
     if not os.path.exists(dir):
@@ -168,20 +167,15 @@ def _cmake_install_mujoco_c(cfg_mujoco_c, cmd):
 
     src_flag='-S'+ cfg_mujoco_c.src_dir
     build_dir_flag='-B'+ cfg_mujoco_c.build_dir
-    install_flag='-DCMAKE_INSTALL_PREFIX=' + cfg_mujoco_c.install_dir
-    build_style3d_flag='-DMUJOCO_BUILD_STYLE3D=OFF'
-    version_flag='-DCMAKE_POLICY_VERSION_MINIMUM=3.5'
-    BUILD_TESTING='-DBUILD_TESTING=OFF'
-    MUJOCO_BUILD_TESTS='-DMUJOCO_BUILD_TESTS=OFF'
-    #MUJOCO_TEST_PYTHON_UTIL='-MUJOCO_TEST_PYTHON_UTIL=OFF'
+
+    install_dir_flag = _cmake_kv('CMAKE_INSTALL_PREFIX', cfg_mujoco_c.install_dir)
 
     if not os.path.exists(cfg_mujoco_c.build_dir):
         os.mkdir(cfg_mujoco_c.build_dir)
-    cmd.run('cmake', src_flag , build_dir_flag, install_flag, version_flag, build_style3d_flag, BUILD_TESTING, MUJOCO_BUILD_TESTS)
+    cmd.run('cmake', src_flag , build_dir_flag, install_dir_flag, cfg_mujoco_c.cmake_extra_flag)
 
     cmd.run('rm', cfg_mujoco_c.install_dir + '/*','-rf')
     cmd.run('cmake', '--build' ,cfg_mujoco_c.build_dir, '--target', 'install' , '--config', cfg_mujoco_c.build_type, )
-
 
     MUJOCO_PATH = os.environ['MUJOCO_PATH']
     MUJOCO_PLUGIN_PATH = os.environ['MUJOCO_PLUGIN_PATH']
@@ -213,14 +207,63 @@ def _pip_install_mujoco_py(cmd):
     cmd.run('pip', 'install', f)
 
 
+def _bool_to_on_off(b):
+    return 'ON' if b  else 'OFF'
+
+def _get_Simulator_Config(curr_dir):
+    simulator_bin_dir = _join_path(curr_dir,'..','Style3DSimulatorBin')
+    if sys.platform == "win32":
+        return _join_path(simulator_bin_dir,'win','lib','cmake','Style3DSimulator')
+    else:
+        return _join_path(simulator_bin_dir,'linux','lib','cmake','Style3DSimulator')
+
+
+def _join_path(*paths):
+    return os.path.abspath(os.path.join(*paths)).replace('\\','/')
+
+def _cmake_kv(k,v):
+    return '-D'+k+'='+v
+
+def _read_me():
+    print('make sure the folowing is ready:')
+    print('- set environment variable MUJOCO_PATH, e.g some_path')
+    print('- set environment variable MUJOCO_PLUGIN_PATH, e.g $MUJOCO_PATH/mujoco_plugin')
+    if sys.platform == "win32":
+        print('- set environment variable GIT_BASH if you are on Windows, e.g your_git/bin/bash.exe')
+    else:
+        print('- install libs if you are on Linux:')
+        print('  - sudo apt update && sudo apt install libgl1-mesa-dev libxinerama-dev libxcursor-dev libxrandr-dev libxi-dev ninja-build')
+
 def install(configs, cmd):
     for cfg in configs:
         _cmake_install_mujoco_c(cfg.mujoco_c, cmd)
         _pip_install_mujoco_py(cmd)
 
-configs = [ 
-    config( cfg_mujoco_c('..','../temp_build','../temp_install','Release'), cfg_mujoco_py('Release'))
+
+curr_dir = os.path.dirname(__file__).replace('\\','/')
+
+parser = argparse.ArgumentParser(description=_read_me())
+parser.add_argument('--plugin_sim', help='add style3dsim as plugin',action="store_true")
+args = parser.parse_args()
+
+cmake_extra_flag = [
+    _cmake_kv('MUJOCO_BUILD_STYLE3D',_bool_to_on_off(args.plugin_sim)),
+    _cmake_kv('Style3DSimulator_DIR',_get_Simulator_Config(curr_dir)),
+    _cmake_kv('CMAKE_POLICY_VERSION_MINIMUM','3.5'),
+    _cmake_kv('BUILD_TESTING','OFF'),
+    _cmake_kv('DMUJOCO_BUILD_TESTS','OFF'),
 ]
 
-cmd =cmd_shell()
-install(configs,cmd)
+
+cmake_source_dir = _join_path(curr_dir,'..')
+build_dir = _join_path(curr_dir,'..','temp_build')
+install_dir = _join_path(curr_dir,'..','temp_install')
+
+cmake_extra_flag = ' '.join(cmake_extra_flag)
+
+configs = [
+    config( cfg_mujoco_c( cmake_source_dir, build_dir ,install_dir, 'Release',cmake_extra_flag) )
+]
+
+cmd = cmd_shell()
+install(configs, cmd)
