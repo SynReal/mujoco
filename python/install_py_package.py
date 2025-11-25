@@ -158,10 +158,9 @@ def _create_virtual_env_if_not_exists(dir,cmd):
 
     if sys.platform == "win32":
         f = dir + '/Scripts/activate'
-        cmd.run('source', f)
     else:
         f = dir + '/bin/activate'
-        cmd.run(f)
+    cmd.run('source', f)
 
 
 def _cmake_install_mujoco_c(cfg_mujoco_c, cmd):
@@ -206,7 +205,7 @@ def _pip_install_mujoco_py(cmd):
 
     if os.path.exists('./dist'):
         cmd.run('rm', './dist/*','-rf')
-    cmd.run('sh', './make_sdist.sh')
+    cmd.run('bash', './make_sdist.sh')
 
     f = os.listdir('./dist')[0]
     f='./dist/'+ f
