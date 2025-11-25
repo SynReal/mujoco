@@ -31,7 +31,9 @@ class cmd_shell:
         if git_bash_key in os.environ:
             bash_path = os.environ[git_bash_key]
         else:
-            print(f'please set environment variable {git_bash_key}')
+            print(f'please set environment variable {git_bash_key}:')
+            print(f'On Windows: your_git/bin/bash.exe')
+            print(f'On Linux: usr/bin/bash')
             exit(1)
 
         self.process = subprocess.Popen(
@@ -43,6 +45,8 @@ class cmd_shell:
             #shell=True,
             bufsize=1,
             env=os.environ,
+            universal_newlines = True,  # Use the default encoding (UTF-8) on modern Python versions
+            encoding = 'utf-8'  # Explicitly specify UTF-8 encoding
         )
 
         # two queues: one for stdout, one for stderr
@@ -101,7 +105,9 @@ class cmd_shell:
         if len(stderr_lines)>0:
             err=''.join(stderr_lines)
             print(err)
-            #exit(1)
+            ret_code=_get_return_code(stdout_lines)
+            if ret_code != 0:
+                exit(ret_code)
 
 
     def _reader(self, pipe, q):
@@ -119,6 +125,9 @@ def _check_cmd_begins(lines):
 
 def _check_output_complete(lines):
     return len(lines)>0 and  lines[0][0]=='$' and  lines[-1].strip() == end_str
+
+def _get_return_code(lines):
+    return int(lines[-2].strip())
 
 def _echo_cmd(cmd):
     return 'echo $ '+ cmd
