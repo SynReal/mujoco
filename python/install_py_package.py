@@ -232,7 +232,7 @@ def _read_me():
         print('- set environment variable GIT_BASH if you are on Windows, e.g your_git/bin/bash.exe')
     else:
         print('- install libs if you are on Linux:')
-        print('  - sudo apt update && sudo apt install libgl1-mesa-dev libxinerama-dev libxcursor-dev libxrandr-dev libxi-dev ninja-build')
+        print('  - sudo apt update && sudo apt install libgl1-mesa-dev libxinerama-dev libxcursor-dev libxrandr-dev libxi-dev ninja-build libwayland-dev pkg-config libxkbcommon-dev')
 
 def install(configs, cmd):
     for cfg in configs:
