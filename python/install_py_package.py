@@ -32,11 +32,12 @@ class cmd_shell:
                 q=p.replace('\\','/')
                 if q.endswith('Git/cmd'):
                     bash_path = _join_path(p,'..','bin','bash.exe')
-                    print(f'found bash: {bash_path}')
 
             if bash_path=='':
                 print('not found git path!')
                 exit(1)
+
+            print(f'found bash: {bash_path}')
 
         else:
             unix_bash_path='/usr/bin/bash'
@@ -229,7 +230,6 @@ def _cmake_kv(k,v):
     return '-D'+k+'='+v
 
 def _read_me():
-    print('make sure the following is ready:')
     if sys.platform == "win32":
         pass
     else:
