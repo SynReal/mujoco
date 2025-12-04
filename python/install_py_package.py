@@ -21,17 +21,23 @@ class config:
     mujoco_c:cfg_mujoco_c
 
 
-
 class cmd_shell:
     def __init__(self ):
 
-        git_bash_key = 'GIT_BASH'
-        if git_bash_key in os.environ:
-            bash_path = os.environ[git_bash_key]
-        elif sys.platform == "win32":
-            print(f'please set environment variable {git_bash_key}:')
-            print(f'On Windows: your_git/bin/bash.exe')
-            exit(1)
+        if sys.platform == "win32":
+            bash_path=''
+            env_path = os.environ['PATH']
+            env_path = env_path.split(';')
+            for p in env_path:
+                q=p.replace('\\','/')
+                if q.endswith('Git/cmd'):
+                    bash_path = _join_path(p,'..','bin','bash.exe')
+                    print(f'found bash: {bash_path}')
+
+            if bash_path=='':
+                print('not found git path!')
+                exit(1)
+
         else:
             unix_bash_path='/usr/bin/bash'
             if os.path.exists(unix_bash_path):
@@ -47,7 +53,7 @@ class cmd_shell:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            #shell=True,
+            shell=True,
             bufsize=1,
             env=os.environ,
             universal_newlines = True,  # Use the default encoding (UTF-8) on modern Python versions
@@ -124,9 +130,6 @@ class cmd_shell:
 
 end_str='----'
 
-def _check_cmd_begins(lines):
-    return len(lines) > 0 and  lines[-1].strip() == end_str
-
 def _check_output_complete(lines):
     return len(lines)>0 and  lines[0][0]=='$' and  lines[-1].strip() == end_str
 
@@ -162,7 +165,7 @@ def _create_virtual_env_if_not_exists(dir,cmd):
     cmd.run('source', f)
 
 
-def _cmake_install_mujoco_c(cfg_mujoco_c, cmd):
+def _cmake_install_mujoco_c(cfg_mujoco_c, curr_dir, cmd):
 
 
     src_flag='-S'+ cfg_mujoco_c.src_dir
@@ -177,34 +180,35 @@ def _cmake_install_mujoco_c(cfg_mujoco_c, cmd):
     cmd.run('rm', cfg_mujoco_c.install_dir + '/*','-rf')
     cmd.run('cmake', '--build' ,cfg_mujoco_c.build_dir, '--target', 'install' , '--config', cfg_mujoco_c.build_type, )
 
-    MUJOCO_PATH = os.environ['MUJOCO_PATH']
-    MUJOCO_PLUGIN_PATH = os.environ['MUJOCO_PLUGIN_PATH']
-    MUJOCO_PATH=MUJOCO_PATH.replace('\\','/')
-    MUJOCO_PLUGIN_PATH=MUJOCO_PLUGIN_PATH.replace('\\','/')
 
-    cmd.run('rm',MUJOCO_PLUGIN_PATH,'-rf')
-    cmd.run('rm',MUJOCO_PATH,'-rf')
-    cmd.run('mkdir',MUJOCO_PATH)
-    cmd.run('mkdir', MUJOCO_PLUGIN_PATH)
+    mujoco_path = cfg_mujoco_c.install_dir
+    mujoco_plugin_path = _join_path( mujoco_path,'mujoco_plugin')
+    cmd.run('export','MUJOCO_PATH='+mujoco_path)
+    cmd.run('export','MUJOCO_PLUGIN_PATH='+mujoco_plugin_path)
 
-    cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/bin/*', MUJOCO_PLUGIN_PATH )
-    cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/bin', MUJOCO_PATH )
-    cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/lib', MUJOCO_PATH )
-    cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/share', MUJOCO_PATH )
-    cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/include', MUJOCO_PATH )
+    if not os.path.exists(mujoco_plugin_path):
+        os.mkdir(mujoco_plugin_path)
+    else:
+        cmd.run('rm', mujoco_plugin_path + '/*','-rf')
+
+    if sys.platform == "win32":
+        cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/bin/*', mujoco_plugin_path )
+    else:
+        cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/lib/*', mujoco_plugin_path )
 
 
-def _pip_install_mujoco_py(cmd):
+def _pip_install_mujoco_py(curr_dir, cmd):
     _create_virtual_env_if_not_exists('.venv',cmd)
 
-    if os.path.exists('./dist'):
-        cmd.run('rm', './dist/*','-rf')
-    cmd.run('bash', './make_sdist.sh')
+    dist_dir=_join_path(curr_dir,'dist')
+    if os.path.exists(dist_dir):
+        cmd.run('rm', dist_dir+'/*','-rf')
+    cmd.run('bash', _join_path(curr_dir,'make_sdist.sh'))
 
-    f = os.listdir('./dist')[0]
-    f='./dist/'+ f
+    f=_join_path(dist_dir,'mujoco-*.tar.gz')
     #cmd.run('pip', 'install', f,'--verbose','--no-clean')
-    cmd.run('pip', 'install', f)
+    #cmd.run('pip', 'install', f)
+    cmd.run('pip', 'wheel','-v','--no-deps', f,'-w',dist_dir)
 
 
 def _bool_to_on_off(b):
@@ -225,19 +229,17 @@ def _cmake_kv(k,v):
     return '-D'+k+'='+v
 
 def _read_me():
-    print('make sure the folowing is ready:')
-    print('- set environment variable MUJOCO_PATH, e.g some_path')
-    print('- set environment variable MUJOCO_PLUGIN_PATH, e.g $MUJOCO_PATH/mujoco_plugin')
+    print('make sure the following is ready:')
     if sys.platform == "win32":
-        print('- set environment variable GIT_BASH if you are on Windows, e.g your_git/bin/bash.exe')
+        pass
     else:
         print('- install libs if you are on Linux:')
-        print('  - sudo apt update && sudo apt install libgl1-mesa-dev libxinerama-dev libxcursor-dev libxrandr-dev libxi-dev ninja-build libwayland-dev pkg-config libxkbcommon-dev')
+        print('  - sudo apt update && sudo apt install cmake gcc-11 g++-11 libgl1-mesa-dev libxinerama-dev libxcursor-dev libxrandr-dev libxi-dev ninja-build libwayland-dev pkg-config libxkbcommon-dev')
 
-def install(configs, cmd):
+def install(configs, curr_dir, cmd):
     for cfg in configs:
-        _cmake_install_mujoco_c(cfg.mujoco_c, cmd)
-        _pip_install_mujoco_py(cmd)
+        _cmake_install_mujoco_c(cfg.mujoco_c, curr_dir, cmd)
+        _pip_install_mujoco_py(curr_dir,cmd)
 
 
 curr_dir = os.path.dirname(__file__).replace('\\','/')
@@ -266,4 +268,4 @@ configs = [
 ]
 
 cmd = cmd_shell()
-install(configs, cmd)
+install(configs,curr_dir, cmd)
