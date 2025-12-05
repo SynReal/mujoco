@@ -193,9 +193,14 @@ def _cmake_install_mujoco_c(cfg_mujoco_c, curr_dir, cmd):
         cmd.run('rm', mujoco_plugin_path + '/*','-rf')
 
     if sys.platform == "win32":
-        cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/bin/*', mujoco_plugin_path )
+        cmd.run('cp' ,'-r', cfg_mujoco_c.build_dir +'/bin/Release/actuator.dll', mujoco_plugin_path )
+        cmd.run('cp' ,'-r', cfg_mujoco_c.build_dir +'/bin/Release/elasticity.dll', mujoco_plugin_path )
+        cmd.run('cp' ,'-r', cfg_mujoco_c.build_dir +'/bin/Release/sensor.dll', mujoco_plugin_path )
     else:
-        cmd.run('cp' ,'-r', cfg_mujoco_c.install_dir +'/lib/*', mujoco_plugin_path )
+        cmd.run('cp' ,'-r', cfg_mujoco_c.build_dir +'/lib/libactuator.*', mujoco_plugin_path )
+        cmd.run('cp' ,'-r', cfg_mujoco_c.build_dir +'/lib/libelasticity.*', mujoco_plugin_path )
+        cmd.run('cp' ,'-r', cfg_mujoco_c.build_dir +'/lib/libsensor.*', mujoco_plugin_path )
+        cmd.run('cp' ,'-r', cfg_mujoco_c.build_dir +'/lib/libsdf_plugin.*', mujoco_plugin_path )
 
 
 def _pip_install_mujoco_py(curr_dir, cmd):
