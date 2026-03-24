@@ -23,7 +23,6 @@ import mujoco.usd.shapes as shapes_module
 import mujoco.usd.utils as utils_module
 import numpy as np
 
-
 # TODO: b/288149332 - Remove once USD Python Binding works well with pytype.
 # pytype: disable=module-attr
 from pxr import Gf
@@ -32,6 +31,8 @@ from pxr import Usd
 from pxr import UsdGeom
 from pxr import UsdShade
 from pxr import Vt
+from pxr import UsdPhysics
+# from pxr import PhysxSchema
 
 
 class USDObject(abc.ABC):
@@ -71,6 +72,7 @@ class USDObject(abc.ABC):
     self.transform_op = self.usd_xform.AddTransformOp()
     self.scale_op = self.usd_xform.AddScaleOp()
 
+       
     self.last_visible_frame = -2
 
   @abc.abstractmethod
@@ -412,7 +414,6 @@ class USDPrimitiveMesh(USDObject):
 
     return mesh_vert, mesh_face, len(mesh_face)
 
-
 class USDTendon(USDObject):
   """Class to handle tendons in the USD scene."""
 
@@ -433,8 +434,8 @@ class USDTendon(USDObject):
     self.usd_refs = collections.defaultdict(dict)
 
     for name, _ in self.tendon_parts.items():
-      part_xform_path = f"{self.xform_path}/Mesh_Xform_{name}"
-      mesh_path = f"{part_xform_path}/Mesh_{obj_name}"
+      part_xform_path = f"{self.xform_path}/Tendon_Xform_{name}"
+      mesh_path = f"{part_xform_path}/Tendon_Mesh_{obj_name}"
       usd_xform = UsdGeom.Xform.Define(stage, part_xform_path)
       self.usd_refs[name]["usd_xform"] = usd_xform
       self.usd_refs[name]["usd_mesh"] = UsdGeom.Mesh.Define(stage, mesh_path)
@@ -550,3 +551,252 @@ class USDTendon(USDObject):
         hemisphere_scale = scale.tolist()
         hemisphere_scale[2] = hemisphere_scale[0]
         self.usd_refs[name]["scale_op"].Set(Gf.Vec3f(hemisphere_scale), frame)
+
+class USDSkin(USDObject):
+
+    def __init__(
+        self,
+        stage: Usd.Stage,
+        model: mujoco.MjModel,
+        scene: mujoco.MjvScene,
+        geom: mujoco.MjvGeom,
+        obj_name: str,
+        dataid: int,
+        rgba: np.ndarray = np.array([1, 1, 1, 1]),
+        geom_textures: Sequence[Optional[Tuple[str, mujoco.mjtTexture]]] = (),
+    ):
+        super().__init__(stage, model, geom, obj_name, rgba, geom_textures)
+        self.scene = scene
+
+        self.dataid = dataid
+
+        mesh_path = f"{self.xform_path}/Mesh_{obj_name}"
+        self.usd_mesh = UsdGeom.Mesh.Define(stage, mesh_path)
+        self.usd_prim = stage.GetPrimAtPath(mesh_path)
+
+        # setting mesh structure properties
+        skin_vert, skin_face, skin_facenum = self._get_mesh_geometry()
+        self.usd_mesh.GetPointsAttr().Set(skin_vert)
+        self.usd_mesh.GetFaceVertexCountsAttr().Set([3 for _ in range(skin_facenum)])
+        self.usd_mesh.GetFaceVertexIndicesAttr().Set(skin_face)
+
+        if (
+            geom.matid != -1
+            and self.geom_textures[mujoco.mjtTextureRole.mjTEXROLE_RGB.value]
+        ):
+            # setting mesh uv properties
+            mesh_texcoord, mesh_facetexcoord = self._get_uv_geometry()
+            self.texcoords = UsdGeom.PrimvarsAPI(self.usd_mesh).CreatePrimvar(
+                "UVMap",
+                Sdf.ValueTypeNames.TexCoord2fArray,
+                UsdGeom.Tokens.faceVarying,
+            )
+            self.texcoords.Set(mesh_texcoord)
+            self.texcoords.SetIndices(Vt.IntArray(mesh_facetexcoord.tolist()))
+            self.attach_image_material(self.usd_mesh)
+        else:
+            self.attach_solid_material(self.usd_mesh)
+
+    def _get_facetexcoord_ranges(self, nmesh, arr):
+        facetexcoords_ranges = [0]
+        running_sum = 0
+        for i in range(nmesh):
+            running_sum += arr[i] * 3
+            facetexcoords_ranges.append(running_sum)
+        return facetexcoords_ranges
+
+    def _get_uv_geometry(self):
+        raise RuntimeError("UV Export not implemented")
+
+    def _get_mesh_geometry(self):
+        skin_vert_adr_from = self.scene.skinvertadr[self.dataid]
+        skin_vert_adr_to = (
+            self.scene.skinvertadr[self.dataid + 1]
+            if self.dataid < self.model.nskin - 1
+            else len(self.model.skin_vert)
+        )
+        skin_vert = self.scene.skinvert.reshape(-1, 3)[
+            skin_vert_adr_from:skin_vert_adr_to
+        ]
+
+        skin_face_adr_from = self.model.skin_faceadr[self.dataid]
+        skin_face_adr_to = (
+            self.model.skin_faceadr[self.dataid + 1]
+            if self.dataid < self.model.nskin - 1
+            else len(self.model.skin_face)
+        )
+        skin_face = self.model.skin_face[skin_face_adr_from:skin_face_adr_to]
+        assert np.min(skin_face) >= 0 and np.max(skin_face) < skin_vert.shape[0]
+        skin_facenum = self.model.skin_facenum[self.dataid]
+        assert skin_face.shape[0] == skin_facenum
+
+        return skin_vert, skin_face, skin_facenum
+
+    def update(
+        self,
+        pos: np.ndarray,
+        mat: np.ndarray,
+        visible: bool,
+        frame: int,
+        scale: Optional[np.ndarray] = None,
+    ):
+        if visible and frame - self.last_visible_frame > 1:
+            # non consecutive visible frames
+            self.update_visibility(False, max(0, self.last_visible_frame))
+            self.update_visibility(True, frame)
+
+        if visible:
+            self.last_visible_frame = frame
+
+        if scale is not None:
+            self.update_scale(scale, frame)
+
+        skin_vert = self._get_mesh_geometry()[0]
+        self.usd_mesh.GetPointsAttr().Set(skin_vert, frame)
+
+class USDFlex(USDObject):
+
+    def __init__(
+        self,
+        stage: Usd.Stage,
+        model: mujoco.MjModel,
+        scene: mujoco.MjvScene,
+        geom: mujoco.MjvGeom,
+        obj_name: str,
+        dataid: int,
+        rgba: np.ndarray = np.array([1, 1, 1, 1]),
+        geom_textures: Sequence[Optional[Tuple[str, mujoco.mjtTexture]]] = (),
+    ):
+        super().__init__(stage, model, geom, obj_name, rgba, geom_textures)
+        self.scene = scene
+
+        self.dataid = dataid
+
+        mesh_path = f"{self.xform_path}/Flex_{obj_name}"
+        self.usd_mesh = UsdGeom.Mesh.Define(stage, mesh_path)
+        self.usd_prim = stage.GetPrimAtPath(mesh_path)
+
+        # setting mesh structure properties
+        skin_vert, skin_face, skin_facenum = self._get_mesh_geometry()
+        self.usd_mesh.GetPointsAttr().Set(skin_vert)
+        self.usd_mesh.GetFaceVertexCountsAttr().Set([3 for _ in range(skin_facenum)])
+        self.usd_mesh.GetFaceVertexIndicesAttr().Set(skin_face)
+        new_extent = UsdGeom.Boundable.ComputeExtentFromPlugins(self.usd_mesh, 0)
+        self.usd_mesh.GetExtentAttr().Set(new_extent)
+        self.usd_mesh.GetDoubleSidedAttr().Set(True)
+
+        self._enable_deformable_body(stage, mesh_path)
+
+        # bbox = [tuple(skin_vert.min(axis=0)), tuple(skin_vert.max(axis=0))]
+        # self.usd_mesh.GetExtentAttr().Set(bbox)
+
+        if (
+            geom.matid != -1
+            and self.geom_textures[mujoco.mjtTextureRole.mjTEXROLE_RGB.value]
+        ):
+            # setting mesh uv properties
+            mesh_texcoord, mesh_facetexcoord = self._get_uv_geometry()
+            self.texcoords = UsdGeom.PrimvarsAPI(self.usd_mesh).CreatePrimvar(
+                "UVMap",
+                Sdf.ValueTypeNames.TexCoord2fArray,
+                UsdGeom.Tokens.faceVarying,
+            )
+            self.texcoords.Set(mesh_texcoord)
+            self.texcoords.SetIndices(Vt.IntArray(mesh_facetexcoord.tolist()))
+            self.attach_image_material(self.usd_mesh)
+        else:
+            self.attach_solid_material(self.usd_mesh)
+
+    def _get_facetexcoord_ranges(self, nmesh, arr):
+        facetexcoords_ranges = [0]
+        running_sum = 0
+        for i in range(nmesh):
+            running_sum += arr[i] * 3
+            facetexcoords_ranges.append(running_sum)
+        return facetexcoords_ranges
+
+    def _get_uv_geometry(self):
+        mesh_texcoord_adr_from = self.model.flex_texcoordadr[self.dataid]
+        mesh_texcoord_adr_to = (
+            self.model.flex_texcoordadr[self.dataid + 1]
+            if self.dataid < self.model.nflex - 1
+            else len(self.model.flex_texcoord)
+        )
+        mesh_texcoord = self.model.flex_texcoord[
+            mesh_texcoord_adr_from:mesh_texcoord_adr_to
+        ]
+
+        mesh_facetexcoord_ranges = self._get_facetexcoord_ranges(
+            self.model.nflex, self.model.flex_elemnum
+        )
+
+        mesh_facetexcoord = self.model.flex_elemtexcoord.flatten()
+        mesh_facetexcoord = mesh_facetexcoord[
+            mesh_facetexcoord_ranges[self.dataid] : mesh_facetexcoord_ranges[
+                self.dataid + 1
+            ]
+        ]
+
+        mesh_facetexcoord[mesh_facetexcoord == len(mesh_texcoord)] = 0
+        return mesh_texcoord, mesh_facetexcoord
+
+    def _get_mesh_geometry(self):
+        skin_vert_adr_from = self.scene.flexvertadr[self.dataid]
+        skin_vert_adr_to = (
+            self.scene.flexvertadr[self.dataid + 1]
+            if self.dataid < self.model.nflex - 1
+            else len(self.scene.flexvert)
+        )
+        skin_vert = self.scene.flexvert.reshape(-1, 3)[
+            skin_vert_adr_from:skin_vert_adr_to
+        ]
+
+        skin_face_adr_from = self.model.flex_elemadr[self.dataid]
+        skin_face_adr_to = (
+            self.model.flex_elemadr[self.dataid + 1]
+            if self.dataid < self.model.nflex - 1
+            else len(self.model.flex_elem)
+        )
+        skin_face = self.model.flex_elem[skin_face_adr_from:skin_face_adr_to]
+        skin_facenum = self.model.flex_elemnum[self.dataid]
+        
+        return skin_vert, skin_face, skin_facenum
+
+    def _enable_deformable_body(self, stage, prim_path):
+        prim = stage.GetPrimAtPath(prim_path)
+        
+        UsdPhysics.CollisionAPI.Apply(prim)
+        UsdPhysics.MeshCollisionAPI.Apply(prim)
+        
+        prim.CreateAttribute("physxDeformable:deformableEnabled", Sdf.ValueTypeNames.Bool).Set(True)
+        prim.CreateAttribute("physxDeformable:solverPositionIterationCount", Sdf.ValueTypeNames.Int).Set(16)
+        prim.CreateAttribute("physxDeformable:selfCollision", Sdf.ValueTypeNames.Bool).Set(True)
+        self.usd_mesh.GetSubdivisionSchemeAttr().Set(UsdGeom.Tokens.catmullClark)
+        prim.CreateAttribute("physxCollision:contactOffset", Sdf.ValueTypeNames.Float).Set(0.002) # 2mm
+        prim.CreateAttribute("physxCollision:restOffset", Sdf.ValueTypeNames.Float).Set(0.001)    # 1mm
+
+    def update(
+        self,
+        pos: np.ndarray,
+        mat: np.ndarray,
+        visible: bool,
+        frame: int,
+        scale: Optional[np.ndarray] = None,
+    ):
+        if visible and frame - self.last_visible_frame > 1:
+            # non consecutive visible frames
+            self.update_visibility(False, max(0, self.last_visible_frame))
+            self.update_visibility(True, frame)
+
+        if visible:
+            self.last_visible_frame = frame
+
+        if scale is not None:
+            self.update_scale(scale, frame)
+
+        skin_vert = self._get_mesh_geometry()[0]
+        self.usd_mesh.GetPointsAttr().Set(skin_vert, frame)
+        new_extent = UsdGeom.Boundable.ComputeExtentFromPlugins(self.usd_mesh, frame)
+        self.usd_mesh.GetExtentAttr().Set(new_extent, frame)
+        # bbox = [tuple(skin_vert.min(axis=0)), tuple(skin_vert.max(axis=0))]
+        # self.usd_mesh.GetExtentAttr().Set(bbox)

@@ -299,6 +299,17 @@ class USDExporter:
           rgba=geom.rgba,
           geom_textures=geom_textures,
       )
+    elif geom.type == mujoco.mjtGeom.mjGEOM_FLEX:
+        usd_geom = object_module.USDFlex(
+          scene=self.scene,
+          stage=self.stage,
+          model=self.model,
+          geom=geom,
+          obj_name=geom_name,
+          dataid=geom.objid,
+          rgba=geom.rgba,
+          geom_textures=geom_textures,
+      )
     else:
       # handling tendons in our scene
       if geom.objtype == mujoco.mjtObj.mjOBJ_TENDON:
@@ -465,7 +476,7 @@ class USDExporter:
     elif light_type == "dome":
       new_light = light_module.USDDomeLight(stage=self.stage, obj_name=obj_name)
       new_light.update(intensity=intensity, color=color)
-
+    
   def add_camera(
       self,
       pos: List[float],
@@ -486,8 +497,9 @@ class USDExporter:
     quat = np.zeros(4)
     mujoco.mju_euler2Quat(quat, rotation_xyz, "xyz")
     mujoco.mju_quat2Mat(rotation, quat)
+    rotation = rotation.reshape(3, 3)
     new_camera.update(cam_pos=np.array(pos), cam_mat=rotation, frame=0)
-
+  
   def save_scene(self, filetype: str = "usd"):
     """Saves the scene to a USD file."""
     assert filetype in ["usd", "usda", "usdc"]
