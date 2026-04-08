@@ -300,13 +300,18 @@ class USDExporter:
           geom_textures=geom_textures,
       )
     elif geom.type == mujoco.mjtGeom.mjGEOM_FLEX:
+        dataid = self.model.geom_dataid[geom.objid]
+        if dataid == -1:
+          # Flex dataid is -1.
+          dataid = geom.objid
+
         usd_geom = object_module.USDFlex(
           scene=self.scene,
           stage=self.stage,
           model=self.model,
           geom=geom,
           obj_name=geom_name,
-          dataid=geom.objid,
+          dataid=dataid,
           rgba=geom.rgba,
           geom_textures=geom_textures,
       )
