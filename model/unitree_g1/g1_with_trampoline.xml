@@ -1,0 +1,48 @@
+<!-- Copyright 2021 DeepMind Technologies Limited
+
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+     You may obtain a copy of the License at
+
+         http://www.apache.org/licenses/LICENSE-2.0
+
+     Unless required by applicable law or agreed to in writing, software
+     distributed under the License is distributed on an "AS IS" BASIS,
+     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     See the License for the specific language governing permissions and
+     limitations under the License.
+-->
+
+<mujoco model="Trampoline">
+  <include file="scene.xml"/>
+
+  <option timestep="0.0005" solver="Newton" tolerance="1e-7" integrator="implicit"/>
+
+  <size memory="10M"/>
+
+  <visual>
+    <map stiffness="100"/>
+  </visual>
+
+  <default>
+    <default class="wall">
+      <geom type="plane" size=".5 .5 .05"/>
+    </default>
+  </default>
+
+  <!--worldbody>
+    <body name="trampoline" pos="0 0 0">
+      <geom name="trampoline" type="cylinder" size="1 1" contype="0" conaffinity="0"
+            rgba="0.2 0.5 1 0.25" group="0"/>
+    </body>
+  </worldbody-->
+
+  <worldbody>
+    <flexcomp type="mesh" file="../trampoline.obj" pos="0 0 1" radius=".001" mass="200" name="plate">
+      <contact condim="3" solref="0.001 1" solimp=".95 .995 .0001" selfcollide="none"/>
+      <edge equality="false" damping="10"/>
+      <elasticity young="1e8" poisson="0" thickness="1e-2" elastic2d="stretch"/>
+      <pin id="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63"/>
+    </flexcomp>
+  </worldbody>
+</mujoco>
