@@ -4646,9 +4646,9 @@ void mjCFlex::Compile(const mjVFS* vfs) {
   if (vert_.size() % 3) {
     throw mjCError(this, "vert size must be a multiple of 3");
   }
-  if (edgestiffness > 0 && dim > 1) {
-    throw mjCError(this, "edge stiffness only available for dim=1, please use elasticity plugins");
-  }
+  // if (edgestiffness > 0 && dim > 1) {
+  //   throw mjCError(this, "edge stiffness only available for dim=1, please use elasticity plugins");
+  // }
   if (interpolated && selfcollide != mjFLEXSELF_NONE) {
     throw mjCError(this, "trilinear interpolation cannot do self-collision");
   }
